@@ -52,11 +52,6 @@ class FixedPatchPrompter_image(nn.Layer):
         inputs['image'] = image + prompt
         return inputs
     
-    # @classmethod
-    # def from_config(cls, cfg, *args, **kwargs):
-    #     prompt_size = cfg['prompt_size']
-    #     return {'prompt_size': prompt_size}
-
 
 @register
 class ArchitectureNew(BaseArch):
@@ -110,7 +105,6 @@ class ArchitectureNew(BaseArch):
         self.neck = neck
 
         self.prompter = FixedPatchPrompter_image(prompt_size=prompter_patch_size)
-        # log_value(type(self.prompter))
 
         self.backbone_wanted = backbone_wanted
         self.rpn_head_wanted = rpn_head_wanted
@@ -161,12 +155,7 @@ class ArchitectureNew(BaseArch):
         for component in ['backbone', 'rpn_head', 'bbox_head', 'bbox_post_process']:
             if component not in fasterRCNN.keys():
                 raise ValueError(f'{component} not found in fasterRCNN.')
-        # img_before = self.inputs['image'].clone()
         self.inputs = self.prompter(self.inputs)
-        # img_after = self.inputs['image']
-        # log_value(type(img_after), type(img_before))
-        # log_value(img_after.shape, img_before.shape)
-        # assert not paddle.equal(img_before[0][0][0][0], img_after[0][0][0][0])
         body_feats = fasterRCNN['backbone'](self.inputs)
         rois, rois_num, _ = fasterRCNN['rpn_head'](body_feats, self.inputs)
         preds, _ = fasterRCNN['bbox_head'](body_feats, rois, rois_num, None)
@@ -175,14 +164,9 @@ class ArchitectureNew(BaseArch):
         bbox, bbox_num, nms_keep_idx = fasterRCNN['bbox_post_process'](preds, (rois, rois_num), im_shape, scale_factor)
         # rescale the prediction back to origin image
         bboxes, bbox_pred, bbox_num = fasterRCNN['bbox_post_process'].get_pred(bbox, bbox_num, im_shape, scale_factor)
-        # log_value(bbox_feat)
-        # log_value(type(bbox_feat), bbox_feat.shape)
         return bbox_pred, bbox_num, body_feats
 
     def _forward(self):
-        # image = self.inputs['image']
-        # log_value(type(image))
-        # log_value(image.shape)
         if self.neck is not None:
             body_feats = self.neck(body_feats)
         if self.training:
@@ -203,8 +187,6 @@ class ArchitectureNew(BaseArch):
             rois, rois_num, rpn_loss = self.rpn_head_wanted(body_feats_wanted, self.inputs)  # USE GT
             bbox_loss, _ = self.bbox_head_wanted(body_feats_wanted, rois, rois_num,
                                           self.inputs)  # USE GT
-            # log_value(len(body_feats_wanted), len(body_feats_supervised))
-            # log_value(body_feats_wanted[0].shape, body_feats_supervised[0].shape)
             feat_loss = F.l1_loss(body_feats_wanted[0], body_feats_supervised[0])
             return rpn_loss, bbox_loss, feat_loss
             
