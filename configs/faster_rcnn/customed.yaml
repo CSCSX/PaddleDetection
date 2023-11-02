@@ -8,8 +8,7 @@ ArchitectureNew:
   rpn_head_supervised: RPNHead
   bbox_head_wanted: BBoxHead
   bbox_head_supervised: BBoxHead
-  bbox_post_process_wanted: BBoxPostProcess
-  bbox_post_process_supervised: BBoxPostProcess
+  bbox_post_process: BBoxPostProcess
   weights_wanted_url: https://paddledet.bj.bcebos.com/models/faster_rcnn_r50_1x_coco.pdparams
   weights_supervised_url: https://paddledet.bj.bcebos.com/models/faster_rcnn_r101_1x_coco.pdparams
 

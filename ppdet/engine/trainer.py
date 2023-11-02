@@ -206,6 +206,16 @@ class Trainer(object):
         self.start_epoch = 0
         self.end_epoch = 0 if 'epoch' not in cfg else cfg.epoch
 
+        # with open('tmp.txt', 'w+') as f:
+        #     ddir = dir(self.optimizer)
+        #     for a in ddir:
+        #         f.write(f'{a}\n')
+        #     f.write(f'state keys {self.optimizer.state_dict().keys()}\n')
+        #     f.write(f'param dict {self.optimizer._param_dict}\n')
+        #     f.write(f'param dict {self.optimizer._param_groups}\n')
+        #     f.write(f'param dict {self.optimizer.state_dict()}\n')
+            
+
         # initial default callbacks
         self._init_callbacks()
 

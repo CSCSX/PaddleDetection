@@ -14,27 +14,20 @@ from ppdet.utils.checkpoint import *
 
 __all__ = ['ArchitectureNew']
 
-def log_value(*args):
-    print(f'{Fore.GREEN}Log Value: {Style.RESET_ALL}', *args)
+def log(*args):
+    print(f'{Fore.GREEN}Log: {Style.RESET_ALL}', *args)
 
 
 class FastRCNNBlock(nn.Layer):
-    def __init__(self, backbone, rpn_head, bbox_head, bbox_post_process):
+    def __init__(self, backbone, rpn_head, bbox_head):
         super(FastRCNNBlock, self).__init__()
         self.backbone = backbone
         self.rpn_head = rpn_head
         self.bbox_head = bbox_head
-        self.bbox_post_process = bbox_post_process
     
+    # Wrapped as an nn.Layer for loading weights, not for backpropogation
     def forward(self):
         return None
-
-def _strip_postfix(path):
-    path, ext = os.path.splitext(path)
-    assert ext in ['', '.pdparams', '.pdopt', '.pdmodel'], \
-            "Unknown postfix {} from weights".format(ext)
-    return path
-
 
 
 class FixedPatchPrompter_image(nn.Layer):
@@ -57,37 +50,6 @@ class FixedPatchPrompter_image(nn.Layer):
 class ArchitectureNew(BaseArch):
     __category__ = 'architecture'
 
-    @staticmethod
-    def _get_pretrained_weights(pretrain_weight):
-        if is_url(pretrain_weight):
-            pretrain_weight = get_weights_path(pretrain_weight)
-        path = _strip_postfix(pretrain_weight)
-        if not (os.path.isdir(path) or os.path.isfile(path) or
-                os.path.exists(path + '.pdparams')):
-            raise ValueError("Model pretrain path `{}` does not exists. "
-                            "If you don't want to load pretrain model, "
-                            "please delete `pretrain_weights` field in "
-                            "config file.".format(path))
-        weights_path = path + '.pdparams'
-        param_state_dict = paddle.load(weights_path)
-        return param_state_dict
-    
-    @staticmethod
-    def _prepare_weights(weights_wanted_url, weights_supervised_url):
-        weights_wanted = ArchitectureNew._get_pretrained_weights(weights_wanted_url)
-        weights_supervised = ArchitectureNew._get_pretrained_weights(weights_supervised_url)
-
-        def add_sufix(string, sufix):
-            tokens = string.split('.')
-            tokens[0] = tokens[0] + sufix
-            return '.'.join(tokens)
-        
-        weights_wanted = {add_sufix(key, '_wanted'): value for key, value in weights_wanted.items()}
-        weights_supervised = {add_sufix(key, '_supervised'): value for key, value in weights_supervised.items()}
-        weights_wanted.update(weights_supervised)
-        paddle.save(weights_wanted, os.path.join('output', 'customed', 'model.pdparams'))
-
-
     def __init__(self,
                  prompter_patch_size,
                  backbone_wanted,
@@ -96,34 +58,26 @@ class ArchitectureNew(BaseArch):
                  rpn_head_supervised,
                  bbox_head_wanted,
                  bbox_head_supervised,
-                 bbox_post_process_wanted,
-                 bbox_post_process_supervised,
+                 bbox_post_process,
                  weights_wanted_url,
                  weights_supervised_url,
                  neck=None):
         super(ArchitectureNew, self).__init__()
         self.neck = neck
-
         self.prompter = FixedPatchPrompter_image(prompt_size=prompter_patch_size)
+        self.fasterRCNNs = {'wanted': FastRCNNBlock(backbone_wanted, 
+                                                    rpn_head_wanted, 
+                                                    bbox_head_wanted), 
+                            'supervised': FastRCNNBlock(backbone_supervised, 
+                                                    rpn_head_supervised, 
+                                                    bbox_head_supervised)}
+        self.bbox_post_process = bbox_post_process
+        load_pretrain_weight(self.fasterRCNNs['wanted'], weights_wanted_url)
+        load_pretrain_weight(self.fasterRCNNs['supervised'], weights_supervised_url)
 
-        self.backbone_wanted = backbone_wanted
-        self.rpn_head_wanted = rpn_head_wanted
-        self.bbox_head_wanted = bbox_head_wanted
-        self.bbox_post_process_wanted = bbox_post_process_wanted
-        self.backbone_supervised = backbone_supervised
-        self.rpn_head_supervised = rpn_head_supervised
-        self.bbox_head_supervised = bbox_head_supervised
-        self.bbox_post_process_supervised = bbox_post_process_supervised
-
-        self.fasterRCNN_wanted = {'backbone': self.backbone_wanted,
-                                  'rpn_head': self.rpn_head_wanted,
-                                  'bbox_head': self.bbox_head_wanted,
-                                  'bbox_post_process': self.bbox_post_process_wanted}
-        self.fasterRCNN_supervised = {'backbone': self.backbone_supervised, 
-                                      'rpn_head': self.rpn_head_supervised,
-                                      'bbox_head': self.bbox_head_supervised,
-                                      'bbox_post_process': self.bbox_post_process_supervised}
-        self._prepare_weights(weights_wanted_url, weights_supervised_url)
+        for name, param in self.named_parameters():
+            log('Optimized paramter:', name, 'stop_gradients', param.stop_gradient )
+        log('Dynamic Graph Mode', paddle.in_dynamic_mode())
         
 
     def init_cot_head(self, relationship):
@@ -138,8 +92,7 @@ class ArchitectureNew(BaseArch):
         rpn_head_supervised = create(cfg['rpn_head_supervised'], **kwargs)
         bbox_head_wanted = create(cfg['bbox_head_wanted'], **kwargs)
         bbox_head_supervised = create(cfg['bbox_head_supervised'], **kwargs)
-        bbox_post_process_wanted = create(cfg['bbox_post_process_wanted'], **kwargs)
-        bbox_post_process_supervised = create(cfg['bbox_post_process_supervised'], **kwargs)
+        bbox_post_process = create(cfg['bbox_post_process'], **kwargs)
         return {
             'backbone_wanted': backbone_wanted,
             'backbone_supervised': backbone_supervised,
@@ -147,51 +100,48 @@ class ArchitectureNew(BaseArch):
             'rpn_head_supervised': rpn_head_supervised,
             'bbox_head_wanted': bbox_head_wanted,
             'bbox_head_supervised': bbox_head_supervised,
-            'bbox_post_process_wanted': bbox_post_process_wanted,
-            'bbox_post_process_supervised': bbox_post_process_supervised
+            'bbox_post_process': bbox_post_process,
         }
 
     def _predict(self, fasterRCNN):
-        for component in ['backbone', 'rpn_head', 'bbox_head', 'bbox_post_process']:
-            if component not in fasterRCNN.keys():
-                raise ValueError(f'{component} not found in fasterRCNN.')
+        if not isinstance(fasterRCNN, FastRCNNBlock):
+            raise ValueError(f'{fasterRCNN} is not a FastRCNNBlock instance.')
         self.inputs = self.prompter(self.inputs)
-        body_feats = fasterRCNN['backbone'](self.inputs)
-        rois, rois_num, _ = fasterRCNN['rpn_head'](body_feats, self.inputs)
-        preds, _ = fasterRCNN['bbox_head'](body_feats, rois, rois_num, None)
+        body_feats = fasterRCNN.backbone(self.inputs)
+        rois, rois_num, _ = fasterRCNN.rpn_head(body_feats, self.inputs)
+        preds, _ = fasterRCNN.bbox_head(body_feats, rois, rois_num, None)
         im_shape = self.inputs['im_shape']
         scale_factor = self.inputs['scale_factor']
-        bbox, bbox_num, nms_keep_idx = fasterRCNN['bbox_post_process'](preds, (rois, rois_num), im_shape, scale_factor)
+        bbox, bbox_num, nms_keep_idx = self.bbox_post_process(preds, (rois, rois_num), im_shape, scale_factor)
         # rescale the prediction back to origin image
-        bboxes, bbox_pred, bbox_num = fasterRCNN['bbox_post_process'].get_pred(bbox, bbox_num, im_shape, scale_factor)
+        bboxes, bbox_pred, bbox_num = self.bbox_post_process.get_pred(bbox, bbox_num, im_shape, scale_factor)
         return bbox_pred, bbox_num, body_feats
 
     def _forward(self):
         if self.neck is not None:
             body_feats = self.neck(body_feats)
+
         if self.training:
             with paddle.no_grad():
-                for _, value in self.fasterRCNN_supervised.items():
-                    if isinstance(value, nn.Layer):
-                        value.eval()
-                bbox_pred, bbox_num, body_feats_supervised = self._predict(self.fasterRCNN_supervised)
+                self.fasterRCNNs['supervised'].eval()
+                bbox_pred, bbox_num, body_feats_supervised = self._predict(self.fasterRCNNs['supervised'])
                 choose = bbox_pred[:, 1]
                 gt_class = bbox_pred[:, :1]
                 gt_bbox = bbox_pred[:, 2:]
                 # threshold
                 gt_class = gt_class[choose > 0.5]
                 gt_bbox = gt_bbox[choose > 0.5]
+            self.fasterRCNNs['supervised'].train()
             self.inputs['gt_class'] = (gt_class,)
             self.inputs['gt_bbox'] = (gt_bbox,)
-            body_feats_wanted = self.backbone_wanted(self.inputs)
-            rois, rois_num, rpn_loss = self.rpn_head_wanted(body_feats_wanted, self.inputs)  # USE GT
-            bbox_loss, _ = self.bbox_head_wanted(body_feats_wanted, rois, rois_num,
-                                          self.inputs)  # USE GT
+            body_feats_wanted = self.fasterRCNNs['wanted'].backbone(self.inputs)
+            rois, rois_num, rpn_loss = self.fasterRCNNs['wanted'].rpn_head(body_feats_wanted, self.inputs)  # USE GT
+            bbox_loss, _ = self.fasterRCNNs['wanted'].bbox_head(body_feats_wanted, rois, rois_num, self.inputs)  # USE GT
             feat_loss = F.l1_loss(body_feats_wanted[0], body_feats_supervised[0])
             return rpn_loss, bbox_loss, feat_loss
-            
         else:
-            bbox_pred, bbox_num, _ = self._predict(self.fasterRCNN_wanted)
+            self.fasterRCNNs['wanted'].eval()
+            bbox_pred, bbox_num, _ = self._predict(self.fasterRCNNs['wanted'])
             return bbox_pred, bbox_num
 
     def get_loss(self, ):

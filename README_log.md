@@ -32,6 +32,11 @@ python tools/infer.py -c .\configs\faster_rcnn\customed.yaml -o use_gpu=true --i
 
 - 修改 `ppdet\modeling\architectures\architecture_new.py` 新增了 `FixedPatchPrompter_image` 模块，添加了 `backbone` 出来的特征之间的 L1 距离
 
+### v2
+
+- 注释掉了 `tools\infer.py` 和 `tools\infer.py` 中自动加载预训练权重的代码，自行在 `ppdet\modeling\architectures\architecture_new.py` 的初始化中加载权重，**当使用其它架构的时候需要把这两行取消注释**
+- 修改 `ppdet\modeling\architectures\architecture_new.py` 使得只有 `prompter` 被加入优化器中，删除了一个冗余的 `bbox_post_process` 模块
+
 ## 存在问题
 
 由于该框架的抽象程度很高，个人感觉实现将两个 `FasterRCNN` 放在一个工作流里的实现很受约束，于是在一些地方打破了抽象层，比如在 `ppdet\modeling\architectures\architecture_new.py` 中夹杂了权重文件的预处理，在 `ppdet\modeling\backbones\resnet.py` 中细分了 `ResNet50` 和 `ResNet101` 两个类

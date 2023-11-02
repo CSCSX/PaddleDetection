@@ -142,10 +142,10 @@ def run(FLAGS, cfg):
         trainer = Trainer(cfg, mode='train')
 
     # load weights
-    if FLAGS.resume is not None:
-        trainer.resume_weights(FLAGS.resume)
-    elif 'pretrain_weights' in cfg and cfg.pretrain_weights:
-        trainer.load_weights(cfg.pretrain_weights)
+    # if FLAGS.resume is not None:
+    #     trainer.resume_weights(FLAGS.resume)
+    # elif 'pretrain_weights' in cfg and cfg.pretrain_weights:
+    #     trainer.load_weights(cfg.pretrain_weights)
 
     # training
     trainer.train(FLAGS.eval)
