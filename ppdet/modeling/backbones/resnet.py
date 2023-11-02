@@ -607,3 +607,29 @@ class Res5Head(nn.Layer):
     def forward(self, roi_feat, stage=0):
         y = self.res5(roi_feat)
         return y
+
+
+@register
+@serializable
+class ResNet50(ResNet):
+    __shared__ = []
+
+    def __init__(self):
+        super().__init__(depth=50,
+                         norm_type='bn',
+                         freeze_at=0,
+                         return_idx=[2],
+                         num_stages=3)
+        
+
+@register
+@serializable
+class ResNet101(ResNet):
+    __shared__ = []
+
+    def __init__(self):
+        super().__init__(depth=101,
+                         norm_type='bn',
+                         freeze_at=0,
+                         return_idx=[2],
+                         num_stages=3)
