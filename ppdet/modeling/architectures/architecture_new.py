@@ -4,6 +4,7 @@ from __future__ import print_function
 
 import paddle
 import paddle.nn as nn
+import paddle.nn.functional as F
 from ppdet.core.workspace import register, create
 from .meta_arch import BaseArch
 import numpy as np
@@ -12,6 +13,10 @@ from colorama import Fore, Style
 from ppdet.utils.checkpoint import *
 
 __all__ = ['ArchitectureNew']
+
+def log_value(*args):
+    print(f'{Fore.GREEN}Log Value: {Style.RESET_ALL}', *args)
+
 
 class FastRCNNBlock(nn.Layer):
     def __init__(self, backbone, rpn_head, bbox_head, bbox_post_process):
@@ -29,6 +34,28 @@ def _strip_postfix(path):
     assert ext in ['', '.pdparams', '.pdopt', '.pdmodel'], \
             "Unknown postfix {} from weights".format(ext)
     return path
+
+
+
+class FixedPatchPrompter_image(nn.Layer):
+    def __init__(self, prompt_size):
+        super(FixedPatchPrompter_image, self).__init__()
+        self.psize = prompt_size
+        self.patch = paddle.create_parameter(shape=[3, prompt_size, prompt_size], 
+                                             dtype='float32', 
+                                             default_initializer=nn.initializer.Normal(mean=0.0, std=1.0))
+    
+    def forward(self, inputs):
+        image = inputs['image']
+        prompt = paddle.zeros(shape=image.shape)
+        prompt[:, :, :self.psize, :self.psize] = self.patch
+        inputs['image'] = image + prompt
+        return inputs
+    
+    # @classmethod
+    # def from_config(cls, cfg, *args, **kwargs):
+    #     prompt_size = cfg['prompt_size']
+    #     return {'prompt_size': prompt_size}
 
 
 @register
@@ -67,6 +94,7 @@ class ArchitectureNew(BaseArch):
 
 
     def __init__(self,
+                 prompter_patch_size,
                  backbone_wanted,
                  backbone_supervised,
                  rpn_head_wanted,
@@ -80,6 +108,9 @@ class ArchitectureNew(BaseArch):
                  neck=None):
         super(ArchitectureNew, self).__init__()
         self.neck = neck
+
+        self.prompter = FixedPatchPrompter_image(prompt_size=prompter_patch_size)
+        # log_value(type(self.prompter))
 
         self.backbone_wanted = backbone_wanted
         self.rpn_head_wanted = rpn_head_wanted
@@ -130,6 +161,12 @@ class ArchitectureNew(BaseArch):
         for component in ['backbone', 'rpn_head', 'bbox_head', 'bbox_post_process']:
             if component not in fasterRCNN.keys():
                 raise ValueError(f'{component} not found in fasterRCNN.')
+        # img_before = self.inputs['image'].clone()
+        self.inputs = self.prompter(self.inputs)
+        # img_after = self.inputs['image']
+        # log_value(type(img_after), type(img_before))
+        # log_value(img_after.shape, img_before.shape)
+        # assert not paddle.equal(img_before[0][0][0][0], img_after[0][0][0][0])
         body_feats = fasterRCNN['backbone'](self.inputs)
         rois, rois_num, _ = fasterRCNN['rpn_head'](body_feats, self.inputs)
         preds, _ = fasterRCNN['bbox_head'](body_feats, rois, rois_num, None)
@@ -138,9 +175,14 @@ class ArchitectureNew(BaseArch):
         bbox, bbox_num, nms_keep_idx = fasterRCNN['bbox_post_process'](preds, (rois, rois_num), im_shape, scale_factor)
         # rescale the prediction back to origin image
         bboxes, bbox_pred, bbox_num = fasterRCNN['bbox_post_process'].get_pred(bbox, bbox_num, im_shape, scale_factor)
-        return bbox_pred, bbox_num
+        # log_value(bbox_feat)
+        # log_value(type(bbox_feat), bbox_feat.shape)
+        return bbox_pred, bbox_num, body_feats
 
     def _forward(self):
+        # image = self.inputs['image']
+        # log_value(type(image))
+        # log_value(image.shape)
         if self.neck is not None:
             body_feats = self.neck(body_feats)
         if self.training:
@@ -148,7 +190,7 @@ class ArchitectureNew(BaseArch):
                 for _, value in self.fasterRCNN_supervised.items():
                     if isinstance(value, nn.Layer):
                         value.eval()
-                bbox_pred, bbox_num = self._predict(self.fasterRCNN_supervised)
+                bbox_pred, bbox_num, body_feats_supervised = self._predict(self.fasterRCNN_supervised)
                 choose = bbox_pred[:, 1]
                 gt_class = bbox_pred[:, :1]
                 gt_bbox = bbox_pred[:, 2:]
@@ -157,22 +199,26 @@ class ArchitectureNew(BaseArch):
                 gt_bbox = gt_bbox[choose > 0.5]
             self.inputs['gt_class'] = (gt_class,)
             self.inputs['gt_bbox'] = (gt_bbox,)
-            body_feats = self.backbone_wanted(self.inputs)
-            rois, rois_num, rpn_loss = self.rpn_head_wanted(body_feats, self.inputs)  # USE GT
-            bbox_loss, _ = self.bbox_head_wanted(body_feats, rois, rois_num,
+            body_feats_wanted = self.backbone_wanted(self.inputs)
+            rois, rois_num, rpn_loss = self.rpn_head_wanted(body_feats_wanted, self.inputs)  # USE GT
+            bbox_loss, _ = self.bbox_head_wanted(body_feats_wanted, rois, rois_num,
                                           self.inputs)  # USE GT
-            return rpn_loss, bbox_loss
+            # log_value(len(body_feats_wanted), len(body_feats_supervised))
+            # log_value(body_feats_wanted[0].shape, body_feats_supervised[0].shape)
+            feat_loss = F.l1_loss(body_feats_wanted[0], body_feats_supervised[0])
+            return rpn_loss, bbox_loss, feat_loss
             
         else:
-            bbox_pred, bbox_num = self._predict(self.fasterRCNN_wanted)
+            bbox_pred, bbox_num, _ = self._predict(self.fasterRCNN_wanted)
             return bbox_pred, bbox_num
 
     def get_loss(self, ):
-        rpn_loss, bbox_loss = self._forward()
+        rpn_loss, bbox_loss, feat_loss = self._forward()
         loss = {}
         loss.update(rpn_loss)
         loss.update(bbox_loss)
         total_loss = paddle.add_n(list(loss.values()))
+        total_loss += feat_loss
         loss.update({'loss': total_loss})
         return loss
 

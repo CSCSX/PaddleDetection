@@ -1,6 +1,7 @@
 architecture: ArchitectureNew
 
 ArchitectureNew:
+  prompter_patch_size: 20
   backbone_wanted: ResNet50
   backbone_supervised: ResNet101
   rpn_head_wanted: RPNHead
