@@ -13,9 +13,6 @@ from ppdet.utils.checkpoint import *
 
 __all__ = ['ArchitectureNew']
 
-def log_value(*args):
-    print(f'{Fore.GREEN}Log Value: {Style.RESET_ALL}', *args)
-
 class FastRCNNBlock(nn.Layer):
     def __init__(self, backbone, rpn_head, bbox_head, bbox_post_process):
         super(FastRCNNBlock, self).__init__()
@@ -144,31 +141,9 @@ class ArchitectureNew(BaseArch):
         return bbox_pred, bbox_num
 
     def _forward(self):
-        # log_value('use', self.use_extra_data)
-        # body_feats = self.backbone(self.inputs)
-        # log_value('type(self.inputs)', type(self.inputs))
-        # log_value(self.inputs.keys())
-        # gt_class = self.inputs['gt_class']
-        # gt_bbox = self.inputs['gt_bbox']
-        # log_value(type(gt_class), type(gt_bbox))
-        # log_value(len(gt_class), len(gt_bbox))
-        # log_value(type(gt_class[0]), type(gt_bbox[0]))
-        # log_value(gt_class[0].shape, gt_bbox[0].shape)
-        # log_value(Fore.RED, self.inputs['im_id'])
-        # log_value(Fore.RED, self.inputs['curr_iter'])
-        # log_value(Fore.RED, self.inputs['image'])
-        # log_value(Fore.RED, self.inputs['im_shape'])
-        # log_value(Fore.RED, self.inputs['scale_factor'])
-        # log_value('mode', self.training)
-        # log_value('mmode', self.fasterRCNN_wanted['rpn_head'].training)
-        # log_value('mmmode', self.rpn_head.training)
         if self.neck is not None:
             body_feats = self.neck(body_feats)
         if self.training:
-            # rois, rois_num, rpn_loss = self.rpn_head(body_feats, self.inputs)  # USE GT
-            # bbox_loss, _ = self.bbox_head(body_feats, rois, rois_num,
-            #                               self.inputs)  # USE GT
-            # return rpn_loss, bbox_loss
             with paddle.no_grad():
                 for _, value in self.fasterRCNN_supervised.items():
                     if isinstance(value, nn.Layer):
@@ -180,18 +155,8 @@ class ArchitectureNew(BaseArch):
                 # threshold
                 gt_class = gt_class[choose > 0.5]
                 gt_bbox = gt_bbox[choose > 0.5]
-            # original_gt_class = self.inputs['gt_class']
-            # original_gt_bbox = self.inputs['gt_bbox']
             self.inputs['gt_class'] = (gt_class,)
             self.inputs['gt_bbox'] = (gt_bbox,)
-            # log_value(gt_class.shape, gt_bbox.shape)
-            # log_value(original_gt_class[0].shape, original_gt_bbox[0].shape)
-            # log_value(gt_class)
-            # log_value(original_gt_class)
-            # log_value(gt_bbox)
-            # log_value(original_gt_bbox)
-            # log_value(self.inputs['gt_bbox'])
-            # exit()
             body_feats = self.backbone_wanted(self.inputs)
             rois, rois_num, rpn_loss = self.rpn_head_wanted(body_feats, self.inputs)  # USE GT
             bbox_loss, _ = self.bbox_head_wanted(body_feats, rois, rois_num,
@@ -200,10 +165,6 @@ class ArchitectureNew(BaseArch):
             
         else:
             bbox_pred, bbox_num = self._predict(self.fasterRCNN_wanted)
-            # log_value(type(bbox_pred), type(bbox_num))
-            # log_value(bbox_pred.shape, bbox_num.shape)
-            # log_value(bbox_pred)
-            # log_value(bbox_num)
             return bbox_pred, bbox_num
 
     def get_loss(self, ):
